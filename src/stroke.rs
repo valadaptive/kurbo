@@ -12,7 +12,8 @@ use crate::common::FloatFuncs;
 
 use crate::{
     common::solve_quadratic, fit_to_bezpath, fit_to_bezpath_opt, offset::CubicOffset, Affine, Arc,
-    BezPath, CubicBez, Line, ParamCurve, ParamCurveArclen, PathEl, PathSeg, Point, QuadBez, Vec2,
+    BezPath, BumpPenalty, CubicBez, Line, ParamCurve, ParamCurveArclen, PathEl, PathSeg, Point,
+    QuadBez, Vec2,
 };
 
 /// Defines the connection between two segments of a stroke.
@@ -309,8 +310,8 @@ fn extend_reversed(out: &mut BezPath, elements: &[PathEl]) {
 
 fn fit_with_opts(co: &CubicOffset, tolerance: f64, opts: &StrokeOpts) -> BezPath {
     match opts.opt_level {
-        StrokeOptLevel::Subdivide => fit_to_bezpath(co, tolerance),
-        StrokeOptLevel::Optimized => fit_to_bezpath_opt(co, tolerance),
+        StrokeOptLevel::Subdivide => fit_to_bezpath(co, tolerance, BumpPenalty::default()),
+        StrokeOptLevel::Optimized => fit_to_bezpath_opt(co, tolerance, BumpPenalty::default()),
     }
 }
 

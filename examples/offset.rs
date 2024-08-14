@@ -3,7 +3,7 @@
 
 //! A simple example to show an offset curve of a cubic Bézier segment.
 
-use kurbo::{offset::CubicOffset, CubicBez, Shape};
+use kurbo::{offset::CubicOffset, BumpPenalty, CubicBez, Shape};
 
 fn main() {
     println!("<svg width='800' height='600' xmlns='http://www.w3.org/2000/svg'>");
@@ -14,7 +14,7 @@ fn main() {
     );
     for i in 1..=80 {
         let co = CubicOffset::new(c, i as f64 * 4.0);
-        let path = kurbo::fit_to_bezpath_opt(&co, 1e-3);
+        let path = kurbo::fit_to_bezpath_opt(&co, 1e-3, BumpPenalty::default());
         println!(
             "  <path d='{}' stroke='#008' fill='none' stroke-width='0.2'/>",
             path.to_svg()

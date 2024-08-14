@@ -5,7 +5,7 @@
 //! source path is a simple mathematical function, but it should work for
 //! more general cases as well.
 
-use kurbo::{BezPath, Point};
+use kurbo::{BezPath, BumpPenalty, Point};
 
 fn plot_fn(f: &dyn Fn(f64) -> f64, d: &dyn Fn(f64) -> f64, xa: f64, xb: f64, n: usize) -> BezPath {
     let width = 800.;
@@ -43,7 +43,7 @@ fn main() {
         path.to_svg()
     );
     let simpl = kurbo::simplify::SimplifyBezPath::new(path);
-    let simplified_path = kurbo::fit_to_bezpath_opt(&simpl, 0.1);
+    let simplified_path = kurbo::fit_to_bezpath_opt(&simpl, 0.1, BumpPenalty::default());
     println!(
         "  <path d='{}' stroke='#000' fill='none' stroke-width='1'/>",
         simplified_path.to_svg()

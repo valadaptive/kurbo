@@ -8,7 +8,7 @@
 
 use std::{io::Write, ops::Range};
 
-use kurbo::{BezPath, CurveFitSample, ParamCurveFit, PathEl, Point, Vec2};
+use kurbo::{BezPath, BumpPenalty, CurveFitSample, ParamCurveFit, PathEl, Point, Vec2};
 
 struct MyPoly;
 
@@ -67,7 +67,7 @@ pub fn write_to<W: Write>(path: &BezPath, mut writer: W) -> std::io::Result<()> 
 
 fn main() {
     println!("<svg width='800' height='600' xmlns='http://www.w3.org/2000/svg'>");
-    let path = kurbo::fit_to_bezpath_opt(&MyPoly, 0.1);
+    let path = kurbo::fit_to_bezpath_opt(&MyPoly, 0.1, BumpPenalty::default());
     println!(
         "  <path d='{}' stroke='#008' fill='none' stroke-width='2.0'/>",
         to_svg_economical(&path)

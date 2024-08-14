@@ -162,9 +162,13 @@ impl CurveFitSample {
 ///
 /// When a higher degree of optimization is desired (at considerably more runtime cost),
 /// consider [`fit_to_bezpath_opt`] instead.
-pub fn fit_to_bezpath(source: &impl ParamCurveFit, accuracy: f64) -> BezPath {
+pub fn fit_to_bezpath(
+    source: &impl ParamCurveFit,
+    accuracy: f64,
+    bump_penalty: BumpPenalty,
+) -> BezPath {
     let mut path = BezPath::new();
-    fit_to_bezpath_rec(source, 0.0..1.0, accuracy, &mut path);
+    fit_to_bezpath_rec(source, 0.0..1.0, accuracy, bump_penalty, &mut path);
     path
 }
 
@@ -174,6 +178,7 @@ fn fit_to_bezpath_rec(
     source: &impl ParamCurveFit,
     range: Range<f64>,
     accuracy: f64,
+    bump_penalty: BumpPenalty,
     path: &mut BezPath,
 ) {
     let start = range.start;
@@ -191,7 +196,7 @@ fn fit_to_bezpath_rec(
     }
     let t = if let Some(t) = source.break_cusp(start..end) {
         t
-    } else if let Some((c, _)) = fit_to_cubic(source, start..end, accuracy) {
+    } else if let Some((c, _)) = fit_to_cubic(source, start..end, accuracy, bump_penalty) {
         if path.is_empty() {
             path.move_to(c.p0);
         }
@@ -212,8 +217,8 @@ fn fit_to_bezpath_rec(
         path.curve_to(p1, p2, end_p);
         return;
     }
-    fit_to_bezpath_rec(source, start..t, accuracy, path);
-    fit_to_bezpath_rec(source, t..end, accuracy, path);
+    fit_to_bezpath_rec(source, start..t, accuracy, bump_penalty, path);
+    fit_to_bezpath_rec(source, t..end, accuracy, bump_penalty, path);
 }
 
 const N_SAMPLE: usize = 20;
@@ -336,13 +341,28 @@ impl CurveDist {
 /// control arms (distance from the control point to the corresponding
 /// endpoint). We mitigate that by applying a penalty as a multiplier to
 /// the measured error (approximate Fréchet distance). This is ReLU-like,
-/// with a value of 1.0 below the elbow, and a given slope above it. The
-/// values here have been determined empirically to give good results.
+/// with a value of 1.0 below the elbow, and a given slope above it.
 ///
 /// [Simplifying Bézier paths]:
 /// https://raphlinus.github.io/curves/2023/04/18/bezpath-simplify.html
-const D_PENALTY_ELBOW: f64 = 0.65;
-const D_PENALTY_SLOPE: f64 = 2.0;
+#[derive(Debug, Clone, Copy)]
+pub struct BumpPenalty {
+    /// Threshold above which control arm length will increase the error.
+    pub elbow: f64,
+    /// Slope of the amount that the error will be multiplied by.
+    pub slope: f64,
+}
+
+impl Default for BumpPenalty {
+    fn default() -> Self {
+        // The values here have been determined empirically to give good
+        // results.
+        Self {
+            elbow: 0.65,
+            slope: 2.0,
+        }
+    }
+}
 
 /// Try fitting a line.
 ///
@@ -388,6 +408,7 @@ pub fn fit_to_cubic(
     source: &impl ParamCurveFit,
     range: Range<f64>,
     accuracy: f64,
+    bump_penalty: BumpPenalty,
 ) -> Option<(CubicBez, f64)> {
     let start = source.sample_pt_tangent(range.start, 1.0);
     let end = source.sample_pt_tangent(range.end, -1.0);
@@ -440,10 +461,12 @@ pub fn fit_to_cubic(
     for (cand, d0, d1) in cubic_fit(th0, th1, unit_area, mx) {
         let c = aff * cand;
         if let Some(err2) = curve_dist.eval_dist(source, c, acc2) {
-            fn scale_f(d: f64) -> f64 {
-                1.0 + (d - D_PENALTY_ELBOW).max(0.0) * D_PENALTY_SLOPE
+            fn scale_f(d: f64, bump_penalty: BumpPenalty) -> f64 {
+                1.0 + (d - bump_penalty.elbow).max(0.0) * bump_penalty.slope
             }
-            let scale = scale_f(d0).max(scale_f(d1)).powi(2);
+            let scale = scale_f(d0, bump_penalty)
+                .max(scale_f(d1, bump_penalty))
+                .powi(2);
             let err2 = err2 * scale;
             if err2 < acc2 && best_err2.map(|best| err2 < best).unwrap_or(true) {
                 best_c = Some(c);
@@ -565,13 +588,17 @@ fn cubic_fit(th0: f64, th1: f64, area: f64, mx: f64) -> ArrayVec<(CubicBez, f64,
 /// segments, and a minimal error over all paths with that number of segments.
 ///
 /// See [`fit_to_bezpath`] for an explanation of the `accuracy` parameter.
-pub fn fit_to_bezpath_opt(source: &impl ParamCurveFit, accuracy: f64) -> BezPath {
+pub fn fit_to_bezpath_opt(
+    source: &impl ParamCurveFit,
+    accuracy: f64,
+    bump_penalty: BumpPenalty,
+) -> BezPath {
     let mut cusps = Vec::new();
     let mut path = BezPath::new();
     let mut t0 = 0.0;
     loop {
         let t1 = cusps.last().copied().unwrap_or(1.0);
-        match fit_to_bezpath_opt_inner(source, accuracy, t0..t1, &mut path) {
+        match fit_to_bezpath_opt_inner(source, accuracy, bump_penalty, t0..t1, &mut path) {
             Some(t) => cusps.push(t),
             None => match cusps.pop() {
                 Some(t) => t0 = t,
@@ -589,6 +616,7 @@ pub fn fit_to_bezpath_opt(source: &impl ParamCurveFit, accuracy: f64) -> BezPath
 fn fit_to_bezpath_opt_inner(
     source: &impl ParamCurveFit,
     accuracy: f64,
+    bump_penalty: BumpPenalty,
     range: Range<f64>,
     path: &mut BezPath,
 ) -> Option<f64> {
@@ -596,7 +624,7 @@ fn fit_to_bezpath_opt_inner(
         return Some(t);
     }
     let err;
-    if let Some((c, err2)) = fit_to_cubic(source, range.clone(), accuracy) {
+    if let Some((c, err2)) = fit_to_cubic(source, range.clone(), accuracy, bump_penalty) {
         err = err2.sqrt();
         if err < accuracy {
             if range.start == 0.0 {
@@ -613,7 +641,7 @@ fn fit_to_bezpath_opt_inner(
     let last_err;
     loop {
         n += 1;
-        match fit_opt_segment(source, accuracy, t0..t1) {
+        match fit_opt_segment(source, accuracy, bump_penalty, t0..t1) {
             FitResult::ParamVal(t) => t0 = t,
             FitResult::SegmentError(err) => {
                 last_err = err;
@@ -624,7 +652,7 @@ fn fit_to_bezpath_opt_inner(
     }
     t0 = range.start;
     const EPS: f64 = 1e-9;
-    let f = |x| fit_opt_err_delta(source, x, accuracy, t0..t1, n);
+    let f = |x| fit_opt_err_delta(source, x, bump_penalty, accuracy, t0..t1, n);
     let k1 = 0.2 / accuracy;
     let ya = -err;
     let yb = accuracy - last_err;
@@ -636,7 +664,7 @@ fn fit_to_bezpath_opt_inner(
     let path_len = path.elements().len();
     for i in 0..n {
         let t1 = if i < n - 1 {
-            match fit_opt_segment(source, x, t0..range.end) {
+            match fit_opt_segment(source, x, bump_penalty, t0..range.end) {
                 FitResult::ParamVal(t1) => t1,
                 FitResult::SegmentError(_) => range.end,
                 FitResult::CuspFound(t) => {
@@ -647,7 +675,7 @@ fn fit_to_bezpath_opt_inner(
         } else {
             range.end
         };
-        let (c, _) = fit_to_cubic(source, t0..t1, accuracy).unwrap();
+        let (c, _) = fit_to_cubic(source, t0..t1, accuracy, bump_penalty).unwrap();
         if i == 0 && range.start == 0.0 {
             path.move_to(c.p0);
         }
@@ -661,8 +689,13 @@ fn fit_to_bezpath_opt_inner(
     None
 }
 
-fn measure_one_seg(source: &impl ParamCurveFit, range: Range<f64>, limit: f64) -> Option<f64> {
-    fit_to_cubic(source, range, limit).map(|(_, err2)| err2.sqrt())
+fn measure_one_seg(
+    source: &impl ParamCurveFit,
+    range: Range<f64>,
+    limit: f64,
+    bump_penalty: BumpPenalty,
+) -> Option<f64> {
+    fit_to_cubic(source, range, limit, bump_penalty).map(|(_, err2)| err2.sqrt())
 }
 
 enum FitResult {
@@ -674,12 +707,17 @@ enum FitResult {
     CuspFound(f64),
 }
 
-fn fit_opt_segment(source: &impl ParamCurveFit, accuracy: f64, range: Range<f64>) -> FitResult {
+fn fit_opt_segment(
+    source: &impl ParamCurveFit,
+    accuracy: f64,
+    bump_penalty: BumpPenalty,
+    range: Range<f64>,
+) -> FitResult {
     if let Some(t) = source.break_cusp(range.clone()) {
         return FitResult::CuspFound(t);
     }
     let missing_err = accuracy * 2.0;
-    let err = measure_one_seg(source, range.clone(), accuracy).unwrap_or(missing_err);
+    let err = measure_one_seg(source, range.clone(), accuracy, bump_penalty).unwrap_or(missing_err);
     if err <= accuracy {
         return FitResult::SegmentError(err);
     }
@@ -688,7 +726,7 @@ fn fit_opt_segment(source: &impl ParamCurveFit, accuracy: f64, range: Range<f64>
         if let Some(t) = source.break_cusp(range.clone()) {
             return Err(t);
         }
-        let err = measure_one_seg(source, t0..x, accuracy).unwrap_or(missing_err);
+        let err = measure_one_seg(source, t0..x, accuracy, bump_penalty).unwrap_or(missing_err);
         Ok(err - accuracy)
     };
     const EPS: f64 = 1e-9;
@@ -704,13 +742,14 @@ fn fit_opt_segment(source: &impl ParamCurveFit, accuracy: f64, range: Range<f64>
 fn fit_opt_err_delta(
     source: &impl ParamCurveFit,
     accuracy: f64,
+    bump_penalty: BumpPenalty,
     limit: f64,
     range: Range<f64>,
     n: usize,
 ) -> Result<f64, f64> {
     let (mut t0, t1) = (range.start, range.end);
     for _ in 0..n - 1 {
-        t0 = match fit_opt_segment(source, accuracy, t0..t1) {
+        t0 = match fit_opt_segment(source, accuracy, bump_penalty, t0..t1) {
             FitResult::ParamVal(t0) => t0,
             // In this case, n - 1 will work, which of course means the error is highly
             // non-monotonic. We should probably harvest that solution.
@@ -718,6 +757,6 @@ fn fit_opt_err_delta(
             FitResult::CuspFound(t) => return Err(t),
         }
     }
-    let err = measure_one_seg(source, t0..t1, limit).unwrap_or(accuracy * 2.0);
+    let err = measure_one_seg(source, t0..t1, limit, bump_penalty).unwrap_or(accuracy * 2.0);
     Ok(accuracy - err)
 }

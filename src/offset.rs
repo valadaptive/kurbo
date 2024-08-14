@@ -164,7 +164,7 @@ impl ParamCurveFit for CubicOffset {
 #[cfg(test)]
 mod tests {
     use super::CubicOffset;
-    use crate::{fit_to_bezpath, fit_to_bezpath_opt, CubicBez, PathEl};
+    use crate::{fit_to_bezpath, fit_to_bezpath_opt, BumpPenalty, CubicBez, PathEl};
 
     // This test tries combinations of parameters that have caused problems in the past.
     #[test]
@@ -178,9 +178,9 @@ mod tests {
         let offset = 3603.7267536453924;
         let accuracy = 0.1;
         let offset_path = CubicOffset::new(curve, offset);
-        let path = fit_to_bezpath_opt(&offset_path, accuracy);
+        let path = fit_to_bezpath_opt(&offset_path, accuracy, BumpPenalty::default());
         assert!(matches!(path.iter().next(), Some(PathEl::MoveTo(_))));
-        let path_opt = fit_to_bezpath(&offset_path, accuracy);
+        let path_opt = fit_to_bezpath(&offset_path, accuracy, BumpPenalty::default());
         assert!(matches!(path_opt.iter().next(), Some(PathEl::MoveTo(_))));
     }
 
@@ -196,13 +196,13 @@ mod tests {
             (1056.7901234567901, 593.90243902439033),
         );
         let co = CubicOffset::new_regularized(c, -0.5, DIM_TUNE * TOLERANCE);
-        fit_to_bezpath(&co, TOLERANCE);
+        fit_to_bezpath(&co, TOLERANCE, BumpPenalty::default());
     }
 
     #[test]
     fn test_cubic_offset_simple_line() {
         let cubic = CubicBez::new((0., 0.), (10., 0.), (20., 0.), (30., 0.));
         let offset = CubicOffset::new(cubic, 5.);
-        let _optimized = fit_to_bezpath(&offset, 1e-6);
+        let _optimized = fit_to_bezpath(&offset, 1e-6, BumpPenalty::default());
     }
 }

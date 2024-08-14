@@ -38,8 +38,8 @@ use core::ops::Range;
 use crate::common::FloatFuncs;
 
 use crate::{
-    fit_to_bezpath, fit_to_bezpath_opt, BezPath, CubicBez, CurveFitSample, Line, ParamCurve,
-    ParamCurveDeriv, ParamCurveFit, PathEl, PathSeg, Point, QuadBez, Vec2,
+    fit_to_bezpath, fit_to_bezpath_opt, BezPath, BumpPenalty, CubicBez, CurveFitSample, Line,
+    ParamCurve, ParamCurveDeriv, ParamCurveFit, PathEl, PathSeg, Point, QuadBez, Vec2,
 };
 
 /// A Bézier path which has been prepared for simplification.
@@ -61,6 +61,7 @@ pub struct SimplifyOptions {
     /// The tangent of the minimum angle below which the path is considered smooth.
     angle_thresh: f64,
     opt_level: SimplifyOptLevel,
+    bump_penalty: BumpPenalty,
 }
 
 /// Optimization level for simplification.
@@ -77,6 +78,7 @@ impl Default for SimplifyOptions {
         SimplifyOptions {
             angle_thresh: 1e-3,
             opt_level,
+            bump_penalty: Default::default(),
         }
     }
 }
@@ -270,8 +272,10 @@ impl SimplifyState {
         } else {
             let s = SimplifyBezPath::new(&self.queue);
             let b = match options.opt_level {
-                SimplifyOptLevel::Subdivide => fit_to_bezpath(&s, accuracy),
-                SimplifyOptLevel::Optimize => fit_to_bezpath_opt(&s, accuracy),
+                SimplifyOptLevel::Subdivide => fit_to_bezpath(&s, accuracy, options.bump_penalty),
+                SimplifyOptLevel::Optimize => {
+                    fit_to_bezpath_opt(&s, accuracy, options.bump_penalty)
+                }
             };
             self.result
                 .extend(b.iter().skip(!self.needs_moveto as usize));
@@ -372,6 +376,14 @@ impl SimplifyOptions {
     /// not corners. The default is approximately 1 milliradian.
     pub fn angle_thresh(mut self, thresh: f64) -> Self {
         self.angle_thresh = thresh;
+        self
+    }
+
+    /// Set the penalty for introducing "bumps" into the simplified curve.
+    ///
+    /// See [`BumpPenalty`] for further explanation on what this does.
+    pub fn bump_penalty(mut self, bump_penalty: BumpPenalty) -> Self {
+        self.bump_penalty = bump_penalty;
         self
     }
 }
